@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 判分产物
+out/
+*.judged.jsonl
+*.judged.csv
+*.summary.json
+
+# 轨迹数据（体积大，不入库）
+*.jsonl
+!examples/*.jsonl
+
+# 生成的轨迹
+output/
+sandbox_cache/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store

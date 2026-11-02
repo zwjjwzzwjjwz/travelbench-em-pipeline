@@ -1,0 +1,62 @@
+#!/bin/bash
+# TravelBench 评测通用版 —— 任务文件 / 模型名 / 输出名 都可传。
+#
+# 用法: bash run_travelbench.sh <任务文件> <agent模型名> <输出名> [并发]
+#   Run A（79 题）:
+#     bash run_travelbench.sh \
+#       /data/user/zhiwenjing/Token-Regularized-Fine-Tuning/release/data/eval_tasks_runA_travelbench.jsonl \
+#       qwen3-8b-agent-a runA_eval_79
+#   Run B（74 题）:
+#     bash run_travelbench.sh \
+#       /data/user/zhiwenjing/Token-Regularized-Fine-Tuning/release/data/eval_tasks_runB_travelbench.jsonl \
+#       qwen3-8b-agent-b runB_eval_74
+#
+# 前置: vLLM 在 127.0.0.1:8001，--served-model-name 必须等于这里传的 <agent模型名>，
+#       否则 harness 报模型不存在（它把模型名原样放进请求体）。
+#
+# 注意 user/tool 模拟器用的是推理模型 deepseek-v4-flash-0731，**故意保持和 Run A
+# 那轮一致**（那次也是推理开），这样 A/B 才可比。TravelBench 的 OpenAIClient 走
+# openai SDK 且只转发显式字段，加不了 reasoning 开关，要改得动代码。
+
+set -u
+cd /data/user/zhiwenjing/TravelBench
+
+ENVF=/data/user/zhiwenjing/model-organisms-for-EM/.env
+export OPENROUTER_API_KEY=$(grep -m1 '^OPENROUTER_API_KEY=' "$ENVF" | cut -d= -f2- | tr -d '"' | tr -d "'")
+if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+    echo "!! 拿不到 OPENROUTER_API_KEY，退出"; exit 1
+fi
+# user/tool 的 key 走环境变量（util.py 的 api_key 默认读这个），不进 argv
+export OPENAI_API_KEY="$OPENROUTER_API_KEY"
+
+TASKS="${1:?用法: run_travelbench.sh <任务文件> <agent模型名> <输出名>}"
+AGENT="${2:?缺少 agent 模型名}"
+NAME="${3:-travelbench_eval}"
+CONC="${4:-10}"          # 第4个可选参数：并发，默认 10（与改动前一致）
+PORT="${5:-8001}"        # 第5个可选参数：vLLM 端口，默认 8001（与改动前一致）
+OUT="./output/${NAME}.json"
+PY=/data/user/zhiwenjing/conda/envs/travel/bin/python
+
+echo "任务文件 = $TASKS"
+echo "agent    = $AGENT"
+echo "out      = $OUT"
+echo "n        = $(wc -l < "$TASKS")"
+echo "start $(date '+%F %T')"
+echo "------------------------------------------------------------"
+
+"$PY" -u -m travelbench run \
+  --file "$TASKS" \
+  --mode multi_turn \
+  --agent-llm "$AGENT" \
+  --agent-llm-args "{\"api_base\":\"http://127.0.0.1:${PORT}/v1\",\"api_key\":\"dummy\",\"max_tokens\":8192,\"temperature\":0.7}" \
+  --user-llm "deepseek/deepseek-v4-flash-0731" \
+  --user-llm-args '{"max_tokens":8192,"temperature":0.0,"api_base":"https://openrouter.ai/api/v1"}' \
+  --tool-llm "deepseek/deepseek-v4-flash-0731" \
+  --tool-llm-args '{"max_tokens":8192,"temperature":0.0,"api_base":"https://openrouter.ai/api/v1"}' \
+  --num-trials 1 \
+  --max-concurrency "$CONC" \
+  --output "$OUT"
+
+echo "------------------------------------------------------------"
+echo "done $(date '+%F %T')"
+echo "结果: $OUT"
